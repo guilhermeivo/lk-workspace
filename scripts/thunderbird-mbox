@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+set -e
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/helper.sh"
+
+# global variable to detect whether the patch is local or was fetched from the
+# lore
+FETCHED=false
+
+OPT_THUNDERBIRD_DIR="$HOME/.thunderbird"
+OPT_PROFILE="*.default-default"
+OPT_SHOW_LIST=false
+OPT_SHOW_HELP=false
+
+declare -A opts=(
+    [list]="OPT_SHOW_LIST"
+    [profile:|p:]="OPT_PROFILE"
+    [help|h]="OPT_SHOW_HELP"
+)
+
+eval_getopt "$(basename "$0")" opts
+
+BOX=$(basename "$1")
+MBOX="$2"
+
+# TODO: improve helper message
+function thunderbird_mbox_help() {
+    echo "usage: thunderbird-mbox <box> <mbox>"
+}
+
+function thunderbird_mbox_create_default_folder() {
+    local target="$1"
+
+    touch "$target"
+    mkdir -p "$target.sbd"
+}
+
+function thunderbird_mbox_list() {
+    local target="$1"
+
+    ls -B -1 "$target.sbd" | grep -v "msf"
+    exit 0
+}
+
+function thunderbird_mbox_fetch() {
+    local msgid="$1"
+    local tmp
+
+    # TODO: create some way to define the batch and the subsystem
+    local domain_lore="lore.kernel.org"
+    local subsystem="all"
+
+    tmp=$(mktemp)
+
+    curl -Ls \
+        "https://${domain_lore}/${subsystem}/${msgid}/t.mbox.gz" \
+        -o "${tmp}.gz"
+
+    gunzip "${tmp}.gz"
+
+    FETCHED=true
+
+    echo "${tmp}"
+}
+
+function thunderbird_mbox() {
+    local target="$1"
+    local box="$2"
+    local mbox="$3"
+
+    touch "$target.sbd/$box"
+
+    local message_id=$(grep "Message-ID" "$mbox")
+
+    if grep -Fq "$message_id" "$target.sbd/$box"; then
+        echo "The message ID has already been added."
+        question "Are you sure you want to add it again?"
+    fi
+
+    (
+        flock -x 200
+
+        cat "$mbox" >> "$target.sbd/$box"
+        printf '\n' >> "$target.sbd/$box"
+
+    ) 200>"$target.sbd/$box.lock"
+
+    # TODO: improve successful output
+    echo "Imported: $mbox"
+
+    if pgrep thunderbird >/dev/null; then
+        rm -f "$target.sbd/$box.msf"
+        echo "You might need to restart Thunderbird."
+    fi
+
+    if ${FETCHED}; then
+        rm -f "$mbox"
+    fi
+
+    exit 0
+}
+
+PROFILE_FOLDER=$(find "$OPT_THUNDERBIRD_DIR" \
+    -maxdepth 1 \
+    -name "$OPT_PROFILE" | head -n1)
+
+if [[ -z "$PROFILE_FOLDER" ]]; then
+    error "A default profile could not be found."
+fi
+
+TARGET="$PROFILE_FOLDER/Mail/Local Folders/patches"
+
+thunderbird_mbox_create_default_folder "$TARGET"
+
+if ${OPT_SHOW_LIST}; then
+    thunderbird_mbox_list "$TARGET"
+    exit 0
+fi
+
+if [[ -z "$BOX" || -z "$MBOX" ]]; then
+    thunderbird_mbox_help
+    exit 1
+fi
+
+if [ ! -f "$MBOX" ]; then
+    question "File not found. Fetch from lore.kernel.org?"
+    MBOX=$(thunderbird_mbox_fetch $MBOX)
+fi
+
+if ! grep -q '^From ' "$MBOX"; then
+    error "Invalid path to mbox."
+fi
+
+thunderbird_mbox "$TARGET" "$BOX" "$MBOX"
