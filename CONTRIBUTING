@@ -1,0 +1,31 @@
+Commit Convention
+=================
+
+We follow Conventional Commits:
+
+https://www.conventionalcommits.org/
+
+Format
+------
+
+type: description
+
+(optional scope)
+
+Types
+-----
+
+feat     → new feature
+fix      → bug fix
+docs     → documentation changes
+refactor → code change without behavior change
+chore    → maintenance tasks
+
+Examples
+--------
+
+feat: add login system
+fix: handle null input
+docs: update README
+chore: update dependencies
+refactor: simplify parser logic
